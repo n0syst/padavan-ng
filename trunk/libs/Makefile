@@ -30,6 +30,7 @@ LIBS_INCLUDE_LIBUSB_0=n
 LIBS_INCLUDE_LIBUSB_1=n
 LIBS_INCLUDE_LIBEVENT=n
 LIBS_INCLUDE_MEDIA=n
+LIBS_INCLUDE_LIBCURL=n
 STORAGE_ENABLED=n
 
 ifdef CONFIG_MMC_BLOCK
@@ -75,11 +76,16 @@ LIBS_INCLUDE_LIBSSL=y
 LIBS_INCLUDE_LIBYAML=y
 LIBS_INCLUDE_LIBGETDNS=y
 endif
+ifeq ($(CONFIG_FIRMWARE_INCLUDE_DOH),y)
+LIBS_INCLUDE_LIBSSL=y
+LIBS_INCLUDE_LIBCURL=y
+endif
 
 ifeq ($(STORAGE_ENABLED),y)
 ifeq ($(CONFIG_FIRMWARE_INCLUDE_TRANSMISSION),y)
 LIBS_INCLUDE_LIBSSL=y
 LIBS_INCLUDE_LIBEVENT=y
+LIBS_INCLUDE_LIBCURL=y
 endif
 ifeq ($(CONFIG_FIRMWARE_INCLUDE_ARIA),y)
 LIBS_INCLUDE_LIBSSL=y
@@ -137,8 +143,17 @@ dir_$(CONFIG_FIRMWARE_INCLUDE_MINIDLNA)		+= libvorbis
 dir_$(LIBS_INCLUDE_MEDIA)			+= libflac
 dir_$(LIBS_INCLUDE_MEDIA)			+= libsqlite
 
-# transmission shared libs
-dir_$(CONFIG_FIRMWARE_INCLUDE_TRANSMISSION)	+= libcurl
+# stubby extra libs
+dir_$(LIBS_INCLUDE_LIBYAML)			+= libyaml
+dir_$(LIBS_INCLUDE_LIBGETDNS)			+= libgetdns
+
+# DoH extra libs
+dir_$(CONFIG_FIRMWARE_INCLUDE_DOH)		+= libev
+dir_$(CONFIG_FIRMWARE_INCLUDE_DOH)		+= libcares
+
+# libcurl for Transmission and DoH proxy
+dir_$(LIBS_INCLUDE_LIBCURL)			+= libnghttp2
+dir_$(LIBS_INCLUDE_LIBCURL)			+= libcurl
 
 # aria2 shared libs
 dir_$(CONFIG_FIRMWARE_INCLUDE_ARIA)		+= libxml2
@@ -153,10 +168,6 @@ dir_$(CONFIG_FIRMWARE_INCLUDE_DNSCRYPT)		+= libsodium
 ifneq (,$(filter y,$(CONFIG_FIRMWARE_INCLUDE_NFSD) $(CONFIG_FIRMWARE_INCLUDE_NFSC)))
 dir_y						+= libtirpc
 endif
-
-# stubby extra libs
-dir_$(LIBS_INCLUDE_LIBYAML)			+= libyaml
-dir_$(LIBS_INCLUDE_LIBGETDNS)			+= libgetdns
 
 all:
 	for i in $(dir_y) ; do \

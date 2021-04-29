@@ -15,9 +15,9 @@ configure:
 	autoreconf -f ; \
 	./configure \
 		--prefix= \
-		--enable-static \
+		--disable-static \
 		--enable-openssl-auto-load-config \
-		--disable-shared \
+		--enable-shared \
 		$(if $(CONFIG_IPV6),--enable-ipv6,--disable-ipv6) \
 		--disable-gopher \
 		--disable-ldap \
@@ -44,7 +44,6 @@ configure:
 		--without-gnutls \
 		--without-ca-path \
 		--without-ca-fallback \
-		--without-ca-bundle \
 		--without-cyassl \
 		--without-darwinssl \
 		--without-default-ssl-backend \
@@ -55,7 +54,7 @@ configure:
 		--without-libssh \
 		--without-libssh2 \
 		--without-krb4 \
-		--without-nghttp2 \
+		--with-nghttp2 \
 		--without-nss \
 		--without-mbedtls \
 		--without-mesalink \
@@ -68,6 +67,7 @@ configure:
 		--with-random=/dev/urandom \
 		--with-zlib=$(STAGEDIR) \
 		--with-ssl=$(STAGEDIR) \
+		--with-ca-bundle=/etc/ssl/cert.pem \
 		--host=$(HOST_TARGET) \
 		--build=$(HOST_BUILD) ; \
 	)
@@ -82,4 +82,4 @@ install:
 	$(MAKE) -C $(SRC_NAME) install DESTDIR=$(STAGEDIR)
 
 romfs:
-
+	cp -fP $(DESTDIR)/lib/libcurl.so* $(ROMFSDIR)/lib

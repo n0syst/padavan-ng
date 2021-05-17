@@ -1,4 +1,4 @@
-# dnsmasq is Copyright (c) 2000-2016 Simon Kelley
+# dnsmasq is Copyright (c) 2000-2021 Simon Kelley
 #
 #  This program is free software; you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -53,7 +53,7 @@ top?=$(CURDIR)
 
 dbus_cflags =   `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_DBUS $(PKG_CONFIG) --cflags dbus-1` 
 dbus_libs =     `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_DBUS $(PKG_CONFIG) --libs dbus-1` 
-ubus_libs =     `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_UBUS $(PKG_CONFIG) --copy -lubox -lubus`
+ubus_libs =     `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_UBUS "" --copy '-lubox -lubus'`
 idn_cflags =    `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_IDN $(PKG_CONFIG) --cflags libidn` 
 idn_libs =      `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_IDN $(PKG_CONFIG) --libs libidn` 
 idn2_cflags =   `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_LIBIDN2 $(PKG_CONFIG) --cflags libidn2`
@@ -63,8 +63,10 @@ ct_libs =       `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_CONNTRACK $(PKG_CON
 lua_cflags =    `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_LUASCRIPT $(PKG_CONFIG) --cflags lua5.2` 
 lua_libs =      `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_LUASCRIPT $(PKG_CONFIG) --libs lua5.2` 
 nettle_cflags = `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_DNSSEC     $(PKG_CONFIG) --cflags 'nettle hogweed' \
+                                                        HAVE_CRYPTOHASH $(PKG_CONFIG) --cflags nettle \
                                                         HAVE_NETTLEHASH $(PKG_CONFIG) --cflags nettle`
 nettle_libs =   `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_DNSSEC     $(PKG_CONFIG) --libs 'nettle hogweed' \
+                                                        HAVE_CRYPTOHASH $(PKG_CONFIG) --libs nettle \
                                                         HAVE_NETTLEHASH $(PKG_CONFIG) --libs nettle`
 gmp_libs =      `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_DNSSEC NO_GMP --copy -lgmp`
 regex_cflags =  `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_REGEX $(PKG_CONFIG) --cflags libpcre`

@@ -1,4 +1,4 @@
-/* dnsmasq is Copyright (c) 2000-2020 Simon Kelley
+/* dnsmasq is Copyright (c) 2000-2021 Simon Kelley
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -168,6 +168,9 @@ struct myoption {
 #define LOPT_SINGLE_PORT   359
 #define LOPT_SCRIPT_TIME   360
 #define LOPT_PXE_VENDOR    361
+#define LOPT_DYNHOST       362
+#define LOPT_LOG_DEBUG     363
+#define LOPT_UMBRELLA	   364
  
 #ifdef HAVE_GETOPT_LONG
 static const struct option opts[] =  
@@ -341,6 +344,9 @@ static const struct myoption opts[] =
     { "dumpfile", 1, 0, LOPT_DUMPFILE },
     { "dumpmask", 1, 0, LOPT_DUMPMASK },
     { "dhcp-ignore-clid", 0, 0,  LOPT_IGNORE_CLID },
+    { "dynamic-host", 1, 0, LOPT_DYNHOST },
+    { "log-debug", 0, 0, LOPT_LOG_DEBUG },
+	{ "umbrella", 2, 0, LOPT_UMBRELLA },
     { NULL, 0, 0, 0 }
   };
 
@@ -491,6 +497,7 @@ static struct {
   { LOPT_RA, OPT_RA, NULL, gettext_noop("Send router-advertisements for interfaces doing DHCPv6"), NULL },
   { LOPT_DUID, ARG_ONE, "<enterprise>,<duid>", gettext_noop("Specify DUID_EN-type DHCPv6 server DUID"), NULL },
   { LOPT_HOST_REC, ARG_DUP, "<name>,<address>[,<ttl>]", gettext_noop("Specify host (A/AAAA and PTR) records"), NULL },
+  { LOPT_DYNHOST, ARG_DUP, "<name>,[<IPv4>][,<IPv6>],<interface-name>", gettext_noop("Specify host record in interface subnet"), NULL },
   { LOPT_CAA, ARG_DUP, "<name>,<flags>,<tag>,<value>", gettext_noop("Specify certification authority authorization record"), NULL },  
   { LOPT_RR, ARG_DUP, "<name>,<RR-number>,[<data>]", gettext_noop("Specify arbitrary DNS resource record"), NULL },
   { LOPT_CLVERBIND, OPT_CLEVERBIND, NULL, gettext_noop("Bind to interfaces in use - check for new interfaces"), NULL },
@@ -512,6 +519,7 @@ static struct {
   { LOPT_QUIET_DHCP, OPT_QUIET_DHCP, NULL, gettext_noop("Do not log routine DHCP."), NULL },
   { LOPT_QUIET_DHCP6, OPT_QUIET_DHCP6, NULL, gettext_noop("Do not log routine DHCPv6."), NULL },
   { LOPT_QUIET_RA, OPT_QUIET_RA, NULL, gettext_noop("Do not log RA."), NULL },
+  { LOPT_LOG_DEBUG, OPT_LOG_DEBUG, NULL, gettext_noop("Log debugging information."), NULL }, 
   { LOPT_LOCAL_SERVICE, OPT_LOCAL_SERVICE, NULL, gettext_noop("Accept queries only from directly-connected networks."), NULL },
   { LOPT_LOOP_DETECT, OPT_LOOP_DETECT, NULL, gettext_noop("Detect and remove DNS forwarding loops."), NULL },
   { LOPT_IGNORE_ADDR, ARG_DUP, "<ipaddr>", gettext_noop("Ignore DNS responses containing ipaddr."), NULL }, 
@@ -521,6 +529,7 @@ static struct {
   { LOPT_DUMPFILE, ARG_ONE, "<path>", gettext_noop("Path to debug packet dump file"), NULL },
   { LOPT_DUMPMASK, ARG_ONE, "<hex>", gettext_noop("Mask which packets to dump"), NULL },
   { LOPT_SCRIPT_TIME, OPT_LEASE_RENEW, NULL, gettext_noop("Call dhcp-script when lease expiry changes."), NULL },
+  { LOPT_UMBRELLA, ARG_ONE, "[=<optspec>]", gettext_noop("Send Cisco Umbrella identifiers including remote IP."), NULL },
   { 0, 0, NULL, NULL, NULL }
 }; 
 
@@ -647,7 +656,7 @@ static char *canonicalise_opt(char *s)
   return ret;
 }
 
-static int atoi_check(char *a, int *res)
+static int numeric_check(char *a)
 {
   char *p;
 
@@ -660,7 +669,26 @@ static int atoi_check(char *a, int *res)
      if (*p < '0' || *p > '9')
        return 0;
 
+  return 1;
+}
+
+static int atoi_check(char *a, int *res)
+{
+  if (!numeric_check(a))
+    return 0;
   *res = atoi(a);
+  return 1;
+}
+
+static int strtoul_check(char *a, u32 *res)
+{
+  if (!numeric_check(a))
+    return 0;
+  *res = strtoul(a, NULL, 10);
+  if (errno == ERANGE) {
+    errno = 0;
+    return 0;
+  }
   return 1;
 }
 
@@ -705,6 +733,19 @@ static void add_txt(char *name, char *txt, int stat)
   r->next = daemon->txt;
   daemon->txt = r;
   r->class = C_CHAOS;
+}
+#endif
+
+#ifdef HAVE_REGEX
+static const char *parse_regex_option(const char *arg, pcre **regex, pcre_extra **pextra)
+{
+  const char *error;
+  int erroff;
+  *regex = pcre_compile(arg, 0, &error, &erroff, NULL);
+  if(NULL == *regex)
+	return error;
+  *pextra = pcre_study(*regex, 0, &error);
+  return NULL;
 }
 #endif
 
@@ -819,7 +860,8 @@ char *parse_server(char *arg, union mysockaddr *addr, union mysockaddr *source_a
     if (interface_opt)
       {
 #if defined(SO_BINDTODEVICE)
-	safe_strncpy(interface, interface_opt, IF_NAMESIZE);
+	safe_strncpy(interface, source, IF_NAMESIZE);
+	source = interface_opt;
 #else
 	return _("interface binding not supported");
 #endif
@@ -1048,6 +1090,8 @@ static void dhcp_config_free(struct dhcp_config *config)
       
       if (config->flags & CONFIG_CLID)
         free(config->clid);
+      if (config->flags & CONFIG_NAME)
+	free(config->hostname);
 
 #ifdef HAVE_DHCP6
       if (config->flags & CONFIG_ADDR6)
@@ -1406,6 +1450,7 @@ static int parse_dhcp_opt(char *errstr, char *arg, int flags)
 	    }
 	  new->len = op - new->val;
 	}
+#ifdef HAVE_IPV6
       else if (is_addr6 && is6)
 	{
 	  unsigned char *op;
@@ -1432,6 +1477,7 @@ static int parse_dhcp_opt(char *errstr, char *arg, int flags)
 	    } 
 	  new->len = op - new->val;
 	}
+#endif
       else if (is_string)
 	{
  	  /* text arg */
@@ -2424,6 +2470,41 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
 	daemon->dns_client_id = opt_string_alloc(arg);
       break;
 
+    case LOPT_UMBRELLA: /* --umbrella */
+      set_option_bool(OPT_UMBRELLA);
+      while (arg) {
+        comma = split(arg);
+        if (strstr(arg, "deviceid:")) {
+          arg += 9;
+          if (strlen(arg) != 16)
+              ret_err(gen_err);
+          for (char *p = arg; *p; p++) {
+            if (!isxdigit((int)*p))
+              ret_err(gen_err);
+          }
+          set_option_bool(OPT_UMBRELLA_DEVID);
+
+          u8 *u = daemon->umbrella_device;
+          char word[3];
+          for (u8 i = 0; i < sizeof(daemon->umbrella_device); i++, arg+=2) {
+            memcpy(word, &(arg[0]), 2);
+            *u++ = strtoul(word, NULL, 16);
+          }
+        }
+        else if (strstr(arg, "orgid:")) {
+          if (!strtoul_check(arg+6, &daemon->umbrella_org)) {
+            ret_err(gen_err);
+          }
+        }
+        else if (strstr(arg, "assetid:")) {
+          if (!strtoul_check(arg+8, &daemon->umbrella_asset)) {
+            ret_err(gen_err);
+          }
+        }
+        arg = comma;
+      }
+      break;
+
     case LOPT_ADD_MAC: /* --add-mac */
       if (!arg)
 	set_option_bool(OPT_ADD_MAC);
@@ -2503,8 +2584,14 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
     case LOPT_IGNORE_ADDR: /* --ignore-address */
      {
 	struct in_addr addr;
+	int prefix = 32;
 	unhide_metas(arg);
-	if (arg && (inet_pton(AF_INET, arg, &addr) > 0))
+
+	if (!arg ||
+	    ((comma = split_chr(arg, '/')) && !atoi_check(comma, &prefix)) ||
+	    (inet_pton(AF_INET, arg, &addr) != 1))
+	  ret_err(gen_err); /* error */
+	else
 	  {
 	    struct bogus_addr *baddr = opt_malloc(sizeof(struct bogus_addr));
 	    if (option == 'B')
@@ -2517,12 +2604,11 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
 		baddr->next = daemon->ignore_addr;
 		daemon->ignore_addr = baddr;
 	      }
-	    baddr->addr = addr;
+	    baddr->mask.s_addr = htonl(~((1 << (32 - prefix)) - 1));
+	    baddr->addr.s_addr = addr.s_addr & baddr->mask.s_addr;
 	  }
-	else
-	  ret_err(gen_err); /* error */
-	break;	
-      }
+	break;
+     }
       
     case 'a':  /* --listen-address */
     case LOPT_AUTHPEER: /* --auth-peer */
@@ -2608,14 +2694,10 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
 		serv->flags = domain || regex ? SERV_HAS_DOMAIN : SERV_FOR_NODOTS;
 		if (regex){
 #ifdef HAVE_REGEX
-			const char *error;
-			int erroff;
-			serv->regex = pcre_compile(regex, 0, &error, &erroff, NULL);
-
-			if (!serv->regex)
+			const char *error = parse_regex_option(regex, &serv->regex, &serv->pextra);
+			if (error)
 				ret_err(error);
 			serv->flags |= SERV_IS_REGEX;
-			serv->pextra = pcre_study(serv->regex, 0, &error);
 #else
 			ret_err("Using a regex while server was configured without regex support!");
 #endif
@@ -2749,20 +2831,13 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
 		 if (*arg == ':' && *(real_end - 1) == ':'){
 #ifdef HAVE_REGEX
 #ifdef HAVE_REGEX_IPSET
-			 const char *error;
-			 int erroff;
-			 char *regex = NULL;
 			 *(real_end - 1) = '\0';
-			 regex = arg + 1;
-
 			 ipsets->next = opt_malloc(sizeof(struct ipsets));
 			 ipsets = ipsets->next;
 			 memset(ipsets, 0, sizeof(struct ipsets));
-			 ipsets->regex = pcre_compile(regex, 0, &error, &erroff, NULL);
-
-			 if (!ipsets->regex)
+			 const char *error = parse_regex_option(arg + 1, &ipsets->regex, &ipsets->pextra);
+			 if (error)
 				 ret_err(error);
-			 ipsets->pextra = pcre_study(ipsets->regex, 0, &error);
 			 ipsets->domain_type = IPSET_IS_REGEX;
 #endif
 #else
@@ -4159,38 +4234,66 @@ err:
       }
       
     case LOPT_INTNAME:  /* --interface-name */
+    case LOPT_DYNHOST:  /* --dynamic-host */
       {
 	struct interface_name *new, **up;
-	char *domain = NULL;
-
-	comma = split(arg);
+	char *domain = arg;
 	
-	if (!comma || !(domain = canonicalise_opt(arg)))
-	  ret_err(_("bad interface name"));
+	arg = split(arg);
 	
 	new = opt_malloc(sizeof(struct interface_name));
-	new->next = NULL;
-	new->addr = NULL;
+	memset(new, 0, sizeof(struct interface_name));
+	new->flags = IN4 | IN6;
 	
 	/* Add to the end of the list, so that first name
 	   of an interface is used for PTR lookups. */
 	for (up = &daemon->int_names; *up; up = &((*up)->next));
 	*up = new;
-	new->name = domain;
-	new->family = 0;
-	arg = split_chr(comma, '/');
-	if (arg)
+	
+	while ((comma = split(arg)))
 	  {
-	    if (strcmp(arg, "4") == 0)
-	      new->family = AF_INET;
-#ifdef HAVE_IPV6
-	    else if (strcmp(arg, "6") == 0)
-	      new->family = AF_INET6;
-#endif
+	    if (inet_pton(AF_INET, arg, &new->proto4))
+	      new->flags |= INP4;
+	    else if (inet_pton(AF_INET6, arg, &new->proto6))
+	      new->flags |= INP6;
+	    else
+	      break;
+	    
+	    arg = comma;
+	  }
+
+	if ((comma = split_chr(arg, '/')))
+	  {
+	    if (strcmp(comma, "4") == 0)
+	      new->flags &= ~IN6;
+	    else if (strcmp(comma, "6") == 0)
+	      new->flags &= ~IN4;
 	    else
 	      ret_err_free(gen_err, new);
-	  } 
-	new->intr = opt_string_alloc(comma);
+	  }
+
+	new->intr = opt_string_alloc(arg);
+
+	if (option == LOPT_DYNHOST)
+	  {
+	    if (!(new->flags & (INP4 | INP6)))
+	      ret_err(_("missing address in dynamic host"));
+
+	    if (!(new->flags & IN4) || !(new->flags & IN6))
+	      arg = NULL; /* provoke error below */
+
+	    new->flags &= ~(IN4 | IN6);
+	  }
+	else
+	  {
+	    if (new->flags & (INP4 | INP6))
+	      arg = NULL; /* provoke error below */
+	  }
+	
+	if (!domain || !arg || !(new->name = canonicalise_opt(domain)))
+	  ret_err(option == LOPT_DYNHOST ?
+		  _("bad dynamic host") : _("bad interface name"));
+	
 	break;
       }
       
@@ -4991,30 +5094,8 @@ static void clear_dynamic_conf(void)
       
       if (configs->flags & CONFIG_BANK)
 	{
-	  struct hwaddr_config *mac, *tmp;
-	  struct dhcp_netid_list *list, *tmplist;
-	  
-	  for (mac = configs->hwaddr; mac; mac = tmp)
-	    {
-	      tmp = mac->next;
-	      free(mac);
-	    }
-	  
-	  if (configs->flags & CONFIG_CLID)
-	    free(configs->clid);
-	  
-	  for (list = configs->netid; list; list = tmplist)
-	    {
-	      free(list->list);
-	      tmplist = list->next;
-	      free(list);
-	    }
-	  
-	  if (configs->flags & CONFIG_NAME)
-	    free(configs->hostname);
-	  
-	  *up = configs->next;
-	  free(configs);
+	  *up = cp;
+	  dhcp_config_free(configs);
 	}
       else
 	up = &configs->next;
@@ -5024,7 +5105,6 @@ static void clear_dynamic_conf(void)
 static void clear_dynamic_opt(void)
 {
   struct dhcp_opt *opts, *cp, **up;
-  struct dhcp_netid *id, *next;
 
   for (up = &daemon->dhcp_opts, opts = daemon->dhcp_opts; opts; opts = cp)
     {
@@ -5032,17 +5112,8 @@ static void clear_dynamic_opt(void)
       
       if (opts->flags & DHOPT_BANK)
 	{
-	  if ((opts->flags & DHOPT_VENDOR))
-	    free(opts->u.vendor_class);
-	  free(opts->val);
-	  for (id = opts->netid; id; id = next)
-	    {
-	      next = id->next;
-	      free(id->net);
-	      free(id);
-	    }
-	  *up = opts->next;
-	  free(opts);
+	  *up = cp;
+	  dhcp_opt_free(opts);
 	}
       else
 	up = &opts->next;
@@ -5122,9 +5193,7 @@ void read_opts(int argc, char **argv, char *compile_opts)
   daemon->soa_refresh = SOA_REFRESH;
   daemon->soa_retry = SOA_RETRY;
   daemon->soa_expiry = SOA_EXPIRY;
-  daemon->max_port = MAX_PORT;
-  daemon->min_port = MIN_PORT;
-
+  
 #ifndef NO_ID
   add_txt("version.bind", "dnsmasq-" VERSION, 0 );
   add_txt("authors.bind", "Simon Kelley", 0);

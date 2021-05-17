@@ -1,4 +1,4 @@
-/* dnsmasq is Copyright (c) 2000-2020 Simon Kelley
+/* dnsmasq is Copyright (c) 2000-2021 Simon Kelley
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -29,7 +29,6 @@
 #define UDP_TEST_TIME 60 /* How often to reset our idea of max packet size. */
 #define SERVERS_LOGGED 30 /* Only log this many servers when logging state */
 #define LOCALS_LOGGED 8 /* Only log this many local addresses when logging state */
-#define RANDOM_SOCKS 64 /* max simultaneous random ports */
 #define LEASE_RETRY 60 /* on error, retry writing leasefile after LEASE_RETRY seconds */
 #define CACHESIZ 150 /* default cache size */
 #define TTL_FLOOR_LIMIT 3600 /* don't allow --min-cache-ttl to raise TTL above this under any circumstances */
@@ -120,8 +119,8 @@ HAVE_AUTH
    define this to include the facility to act as an authoritative DNS
    server for one or more zones.
 
-HAVE_NETTLEHASH
-   include just hash function from nettle, but no DNSSEC.
+HAVE_CRYPTOHASH
+   include just hash function from crypto library, but no DNSSEC.
 
 HAVE_DNSSEC
    include DNSSEC validator.
@@ -137,7 +136,7 @@ HAVE_INOTIFY
 
 HAVE_REGEX
    Define this if you want to link against lib pcre to get regex
-   support in "address=" matches
+   support in "address=" and "server=" matches
 
 HAVE_REGEX_IPSET
    Define this if you want to link against lib pcre to get regex
@@ -153,6 +152,7 @@ NO_SCRIPT
 NO_LARGEFILE
 NO_AUTH
 NO_DUMPFILE
+NO_LOOP
 NO_INOTIFY
    these are available to explicitly disable compile time options which would 
    otherwise be enabled automatically (HAVE_IPV6, >2Gb file sizes) or 
@@ -199,7 +199,7 @@ RESOLVFILE
 /* #define HAVE_IDN */
 /* #define HAVE_LIBIDN2 */
 /* #define HAVE_CONNTRACK */
-/* #define HAVE_NETTLEHASH */
+/* #define HAVE_CRYPTOHASH */
 /* #define HAVE_DNSSEC */
 /* #define HAVE_REGEX */
 /* #define HAVE_REGEX_IPSET */
@@ -467,10 +467,10 @@ static char *compile_opts =
 "no-"
 #endif
 "auth "
-#if !defined(HAVE_NETTLEHASH) && !defined(HAVE_DNSSEC)
+#if !defined(HAVE_CRYPTOHASH) && !defined(HAVE_DNSSEC)
 "no-"
 #endif
-"nettlehash "
+"cryptohash "
 #ifndef HAVE_DNSSEC
 "no-"
 #endif
@@ -491,7 +491,4 @@ static char *compile_opts =
 #endif
 "dumpfile";
 
-#endif
-
-
-
+#endif /* defined(HAVE_DHCP) */
